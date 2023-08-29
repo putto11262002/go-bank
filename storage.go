@@ -12,6 +12,8 @@ type Storage interface {
 	GetAccountByID(int) (*Account, error)
 	GetAccounts() ([]*Account, error)
 	GetAccountByNumber(int64) (*Account, error)
+	CreateTransaction(*Account, *Account, int64) (*Transaction, error)
+	Deposite(*Account, int64) error
 }
 
 type PostgresStore struct {
@@ -34,7 +36,13 @@ func NewPostgresStore(connStr string) (*PostgresStore, error) {
 }
 
 func (s *PostgresStore) init() error {
-	return s.createAccountTable()
+	if err := s.createAccountTable(); err != nil {
+		return err
+	}
+	if err := s.createTransactionTable(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *PostgresStore) createAccountTable() error {
@@ -51,14 +59,92 @@ func (s *PostgresStore) createAccountTable() error {
 	return err
 }
 
+
+func (s *PostgresStore) createTransactionTable() error {
+	query := `
+	create table if not exists transaction (
+		id serial primary key,
+		fromAcc serial,
+		toAcc serial,
+		amount int,
+		created_at timestamp
+	)
+	`
+	_, err := s.db.Exec(query)
+	return err
+}
+
+
+func (s *PostgresStore) Deposite(account *Account, amount int64) error {
+	_, err  := s.db.Exec("update account set balance = balance + $1", amount)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *PostgresStore) CreateTransaction(from *Account, to *Account, amount int64) (*Transaction, error) {
+	tx, err := s.db.Begin()
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer tx.Rollback()
+
+	row := tx.QueryRow("select balance from account where id = $1", from.ID)
+	
+	err = row.Scan(&from.Balance)
+	if err != nil {
+		return nil, err
+	}
+
+	if from.Balance < amount {
+		return nil, fmt.Errorf("insufficiant balance")
+	}
+
+	_, err = tx.Exec("update account set balance = $1 where id = $2", from.Balance - amount, from.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec("update account set balance = $1 where id = $2", to.Balance + amount, to.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	transaction := NewTransaction(from.Number, to.Number, amount)
+
+	row = tx.QueryRow(`
+	insert into transaction 
+	(fromAcc, toAcc, amount, created_at)
+	values
+	($1, $2, $3, $4)
+	returning id, fromAcc, toAcc, amount, created_at
+	`,
+	transaction.From,
+	transaction.To,
+	transaction.Amount,
+	transaction.CreatedAt)
+
+	transaction, err = scanIntoTransaction(row)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return transaction, nil
+}
+
 func (s *PostgresStore) CreateAccount(acc *Account) (*Account, error) {
-	fmt.Printf("%+v", acc)
 	query := `
 	insert into account 
 	(first_name, last_name, number, balance, password, created_at)
 	values  
 	($1, $2, $3, $4, $5, $6)
-
 	returning id, first_name, last_name, number, balance, password, created_at
 	`
 	row := s.db.QueryRow(query,
@@ -129,6 +215,20 @@ type Scannable interface {
 	Scan(dest ...interface{}) error
 }
 
+func scanIntoTransaction(scanable Scannable)(*Transaction, error){
+	transaction := Transaction{}
+	err := scanable.Scan(
+		&transaction.ID,
+		&transaction.From,
+		&transaction.To,
+		&transaction.Amount,
+		&transaction.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &transaction, nil
+}
 
 func scanIntoAccount(scanable Scannable) (*Account, error) {
 	account := Account{}

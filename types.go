@@ -9,6 +9,11 @@ import (
 )
 
 
+type DepositeRequest struct {
+	Amount int64 `json:"amount"`
+}
+
+
 type LoginRequest struct {
 	AccountNumber int64 `json:"accountNumber"`
 	Password string `json:"password"`
@@ -21,8 +26,24 @@ type CreateAccountRequest struct {
 }
 
 type TransferRequest struct {
-	ToAccount int `json:"toAccount"`
-	Amount int `json:"amount"`
+	ToAccount int64 `json:"toAccount"`
+	Amount int64 `json:"amount"`
+}
+
+type Transaction struct {
+	ID int `json:"id"`
+	From int64 `json:"from"`
+	To int64 `json:"to"`
+	Amount int64 `json:"amount"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+func NewTransaction(from, to, amount int64) (*Transaction){
+	return &Transaction{
+		From: from,
+		To: to,
+		Amount: amount,
+		CreatedAt: time.Now().UTC(),
+	}
 }
 
 type Account struct {
@@ -34,6 +55,7 @@ type Account struct {
 	Password string `json:"-"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
 
 
 func NewAccount(firstName, lastName, password string) (*Account, error) {

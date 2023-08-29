@@ -48,7 +48,8 @@ func (s *APIServer) Run() {
 	router.HandleFunc("/login", makeHTTPHandleFunc(s.handleLogin))
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
 	router.HandleFunc("/account/me", s.withJWTAuth(makeHTTPHandleFunc(s.handleMyAccount)))
-	router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer))
+	router.HandleFunc("/transfer", s.withJWTAuth(makeHTTPHandleFunc(s.handleTransfer)))
+	router.HandleFunc("/deposit", s.withJWTAuth(makeHTTPHandleFunc(s.handleDeplosit)))
 
 	log.Printf("Server is running on port: %v\n", s.listenAddr)
 
@@ -103,6 +104,30 @@ func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) err
 
 // 	return WriteJSON(w, http.StatusOK, account)
 // }
+
+func (s *APIServer) handleDeplosit(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return fmt.Errorf("method not allowed: %s", r.Method)
+	}
+	depReq := &DepositeRequest{}
+	err := json.NewDecoder(r.Body).Decode(depReq)
+	if err != nil {
+		return err
+	}
+
+	accountCtx, ok := r.Context().Value(ctxAccountKey).(*Account)
+	
+	if !ok {
+		accountCtx = &Account{}
+	}
+
+	err = s.store.Deposite(accountCtx, depReq.Amount)
+	if err != nil {
+		return err
+	}
+
+	return WriteJSON(w, http.StatusNoContent, nil)
+}
 
 func (s *APIServer) handleGetMyAccount(w http.ResponseWriter, r *http.Request) error {
 
@@ -185,13 +210,32 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return fmt.Errorf("method not allowed: %s", r.Method)
+	}
 	transferReq := &TransferRequest{}
 	if err := json.NewDecoder(r.Body).Decode(transferReq); err != nil {
 		return err
 	}
 	defer r.Body.Close()
 
-	return WriteJSON(w, http.StatusOK, transferReq)
+	accountCtx, ok := r.Context().Value(ctxAccountKey).(*Account)
+	
+	if !ok {
+		accountCtx = &Account{}
+	}
+
+	to, err := s.store.GetAccountByNumber(transferReq.ToAccount)
+	if err != nil {
+		return err
+	}
+
+	transaction, err := s.store.CreateTransaction(accountCtx, to, int64(transferReq.Amount))
+	if err != nil {
+		return err
+	}
+
+	return WriteJSON(w, http.StatusOK, transaction)
 }
 
 func (s *APIServer) withJWTAuth(handlerFunc http.HandlerFunc) http.HandlerFunc {
